@@ -195,6 +195,52 @@ AC_DEFINE(MU_STORE_SCHEMA_VERSION,["451"],['Schema' version of the database])
 ###############################################################################
 
 ###############################################################################
+# we need gio and gio-unix for D-Bus
+#
+
+AC_ARG_WITH([dbus],
+   [AS_HELP_STRING([--with-dbus=yes|no])],
+   [dbus=$withval],[dbus=auto])
+
+AS_IF([test "x$dbus" != "xyes" -a "x$dbus" != "xno" -a "x$dbus" != "xauto"],
+      AC_MSG_ERROR([the argument for --with-dbus= must be either \
+      			yes|auto|no ($dbus)]))
+
+AS_IF([test "x$dbus" != "no"],[
+   PKG_CHECK_MODULES(GIO,gio-2.0,[have_gio=yes],[have_gio=no])
+   AS_IF([test "x$have_gio" = "xyes"],[
+	    gio_version="`$PKG_CONFIG --modversion gio-2.0`"])
+   AC_SUBST(GIO_CFLAGS)
+   AC_SUBST(GIO_LIBS)
+
+   PKG_CHECK_MODULES(GIO_UNIX,gio-unix-2.0,[have_gio_unix=yes],[have_gio_unix=no])
+   AS_IF([test "x$have_gio_unix" = "xyes"],[
+	    gio_unix_version="`$PKG_CONFIG --modversion gio-unix-2.0`"])
+   AC_SUBST(GIO_UNIX_CFLAGS)
+   AC_SUBST(GIO_UNIX_LIBS)
+])
+AM_CONDITIONAL(HAVE_GIO, [test "x$have_gio" = "xyes"])
+AM_CONDITIONAL(HAVE_GIO_UNIX, [test "x$have_gio_unix" = "xyes"])
+
+# only an error if we explicitly asked for it
+AS_IF([test "x$dbus" = "xyes" -a "x$have_gio" = "xno"],[
+   AC_MSG_ERROR([GIO 2.x not found])
+])
+AS_IF([test "x$dbus" = "xyes" -a "x$have_gio_unix" = "xno"],[
+   AC_MSG_ERROR([GIO-Unix 2.x not found])
+])
+
+AS_IF([test "x$dbus" != "xno" -a "x$have_gio" = "xyes" -a "x$have_gio_unix" = "xyes"],[
+   builddbus=yes
+   AC_DEFINE_UNQUOTED([BUILD_DBUS],1,[Whether we build with dbus support])
+   AC_CHECK_PROG([GDBUS_CODEGEN],[gdbus-codegen],[gdbus-codegen])
+])
+
+# should we build the D-Bus support?
+AM_CONDITIONAL(BUILD_DBUS, [test "x$builddbus" = "xyes"])
+###############################################################################
+
+###############################################################################
 # we need GTK+3 for some of the graphical tools
 # use --without-gtk to disable it
 AC_ARG_ENABLE([gtk],AS_HELP_STRING([--disable-gtk],[Disable GTK+]))
@@ -303,6 +349,11 @@ echo "GTK+ version                         : $gtk_version"
 echo "Webkit2/GTK+ version                 : $webkit_version"
 ])
 
+AM_COND_IF([BUILD_DBUS],[
+echo "GIO version                          : $gio_version"
+echo "GIO-Unix version                     : $gio_unix_version"
+])
+
 AM_COND_IF([BUILD_GUILE],[
 echo "Guile version                        : $guile_version"
 ])
@@ -320,6 +371,10 @@ echo "Build 'mug' toy-ui (gtk+/webkit)     : yes"],[
 echo "Build 'mug' toy-ui (gtk+/webkit)     : no"
 ])
 
+AM_COND_IF([BUILD_DBUS],[
+echo "Build D-Bus support                  : yes"],[
+echo "Build D-Bus support                  : no"
+])
 echo
 
 echo "Have direntry->d_ino                 : $use_dirent_d_ino"

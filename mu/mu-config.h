@@ -65,6 +65,7 @@ typedef enum {
 
 	MU_CONFIG_CMD_ADD,
 	MU_CONFIG_CMD_CFIND,
+	MU_CONFIG_CMD_DBUS,
 	MU_CONFIG_CMD_EXTRACT,
 	MU_CONFIG_CMD_FIND,
 	MU_CONFIG_CMD_HELP,
@@ -189,6 +190,10 @@ struct _MuConfig {
         /* options for mu-script */
 	gchar           *script;         /* script to run */
 	const char      **script_params; /* parameters for scripts */
+
+	/* options for dbus */
+	gchar		*dbus_suffix;    /* suffix to add to the name we
+					    register with D-Bus */
 };
 typedef struct _MuConfig MuConfig;
 

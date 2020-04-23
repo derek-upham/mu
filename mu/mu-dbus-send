@@ -1,0 +1,108 @@
+#!/bin/bash
+
+set -e
+set -u
+
+# Name for the program, without the directory, to display in error messages
+progname="$(basename "$0")"
+
+print_reply=no
+reply_timeout=1000                           # milliseconds
+
+service_name=nl.djcbsoftware.Mu.Maildir
+object='/mu/cache'
+interface=nl.djcbsoftware.Mu.Server
+
+# Report a short usage blurb.
+usage() {
+  cat <<"EOF"
+usage: $progname [--[no-]print-reply] [--reply-timeout=MSECS] SEXP"
+
+Send SEXP to the running MU server listening to the session D-Bus.
+
+By default, the client wait 1000 ms for a reply from the server.  Use
+--reply-timeout to specify a different timeout, or --no-print-reply to
+not wait for a timeout at all.
+
+This script requires the "dbus-send" command line utility.
+
+Example:
+
+# Trigger a reindex and cleanup
+% mu-dbus-send --reply-timeout=60000 "(index :cleanup true)"
+
+# Shut down the server
+% mu-dbus-send '(quit)'
+
+EOF
+}
+
+# Report the error message, a short usage blurb, and exit.
+error() {
+  echo "$progname: $*" 1>&2
+  usage "$0"
+  exit 1
+}
+
+##
+## Initialization
+##
+
+# Note that getopt picks the short options implicitly if you don't
+# make them explicit.  The -o '' means "don't use short options".
+#
+# Because we want to examine the exit status of 'getopt', we are
+# limited to storing the result of the command substiution.  The 'eval
+# set --' call has to come afterwards.
+TEMP=$(getopt -n "$progname" -o '' --long print-reply,reply-timeout: -- "$@")
+
+if test $? != 0; then
+    usage
+    exit 1
+fi
+
+# Note the quotes around `$TEMP': they are essential!
+eval set -- "$TEMP"
+
+while true ; do
+    case "$1" in
+        --no-print-reply)
+            shift 1
+            print_reply=false
+            ;;
+        --print-reply)
+            shift 1
+            print_reply=true
+            ;;
+        --reply-timeout)
+            shift 1
+            reply_timeout="$1"
+            shift 1
+            ;;
+        --)
+            shift 1
+            break ;;
+        *)
+            echo "$progname: invalid argument $1" 1>&2
+            exit 1 ;;
+    esac
+done
+
+if test -z "${DBUS_SESSION_BUS_ADDRESS:-}"; then
+    error "\$DBUS_SESSION_BUS_ADDRESS is not defined, can't connect to D-Bus"
+fi
+
+command_string="$1"
+
+declare -a reply_args
+if test "$print_reply" = true; then
+    reply_args=(--print-reply --reply-timeout="${reply_timeout}")
+fi
+
+exec \
+    dbus-send "${reply_args[@]}" \
+    --type=method_call --session \
+    --dest="$service_name" \
+    "$object" \
+    "${interface}".Execute \
+    string:"$command_string"
