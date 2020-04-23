@@ -466,6 +466,22 @@ config_options_group_server (void)
 	return og;
 }
 
+static GOptionGroup *
+config_options_group_dbus (void)
+{
+  GOptionGroup *og;
+  GOptionEntry entries[] = {
+    {"dbus-suffix", 0, 0, G_OPTION_ARG_STRING, &MU_CONFIG.dbus_suffix,
+     "add alphanumeric SUFFIX to the D-Bus name", "<suffix>"},
+    {NULL, 0, 0, 0, NULL, NULL, NULL}
+  };
+
+  og = g_option_group_new("dbus", "Options for the 'dbus' command",
+                          "", NULL, NULL);
+  g_option_group_add_entries(og, entries);
+
+  return og;
+}
 
 static MuConfigCmd
 cmd_from_string (const char *str)
@@ -477,6 +493,7 @@ cmd_from_string (const char *str)
 	} cmd_map[] = {
 		{ "add",     MU_CONFIG_CMD_ADD     },
 		{ "cfind",   MU_CONFIG_CMD_CFIND   },
+		{ "dbus",    MU_CONFIG_CMD_DBUS    },
 		{ "extract", MU_CONFIG_CMD_EXTRACT },
 		{ "find",    MU_CONFIG_CMD_FIND    },
 		{ "help",    MU_CONFIG_CMD_HELP    },
@@ -553,6 +570,8 @@ get_option_group (MuConfigCmd cmd)
 	switch (cmd) {
 	case MU_CONFIG_CMD_CFIND:
 		return config_options_group_cfind();
+	case MU_CONFIG_CMD_DBUS:
+		return config_options_group_dbus();
 	case MU_CONFIG_CMD_EXTRACT:
 		return config_options_group_extract();
 	case MU_CONFIG_CMD_FIND:

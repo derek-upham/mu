@@ -64,6 +64,7 @@ extern int read_history ();
 #include "mu-store.hh"
 #include "mu-msg-part.h"
 #include "mu-contacts.hh"
+#include "mu-cmd-server.h"
 
 #include "utils/mu-str.h"
 #include "utils/mu-utils.hh"
@@ -83,7 +84,7 @@ sig_handler (int sig)
         MuTerminate = true;
 }
 
-static void
+void
 install_sig_handler (void)
 {
         struct sigaction action;
@@ -101,6 +102,52 @@ install_sig_handler (void)
                                     sigs[i], g_strerror (errno));;
 }
 
+Context::Context(MuConfig *opts)
+{
+        const auto dbpath{mu_runtime_path(MU_RUNTIME_PATH_XAPIANDB)};
+        GError *gerr{};
+        store = mu_store_new_writable (dbpath, NULL);
+        if (!store) {
+                const auto mu_init = format("mu init %s%s",
+                                            opts->muhome ? "--muhome=" : "",
+                                            opts->muhome ? opts->muhome : "");
+
+                if (gerr) {
+                        if ((MuError)gerr->code == MU_ERROR_XAPIAN_CANNOT_GET_WRITELOCK)
+                                print_error(MU_ERROR_XAPIAN_CANNOT_GET_WRITELOCK,
+                                            "mu database already locked; "
+                                            "some other mu running?");
+                        else
+                                print_error((MuError)gerr->code,
+                                            "cannot open database @ %s:%s; already running? "
+                                            "if not, please try '%s", dbpath,
+                                            gerr->message ? gerr->message : "something went wrong",
+                                            mu_init.c_str());
+                } else
+                        print_error(MU_ERROR,
+                                    "cannot open database @ %s; already running? if not, please try '%s'",
+                                    dbpath, mu_init.c_str());
+
+                throw Mu::Error (Error::Code::Store, &gerr/*consumed*/,
+                                 "failed to open database @ %s; already running? if not, please try '%s'",
+                                 dbpath, mu_init.c_str());
+        }
+
+        query = mu_query_new (store, &gerr);
+        if (!query)
+                throw Error(Error::Code::Store, &gerr, "failed to create query");
+}
+
+Context::~Context()
+{
+        if (query)
+                mu_query_destroy(query);
+        if (store) {
+                mu_store_flush(store);
+                mu_store_unref(store);
+        }
+}
+
 
 /*
  * Markers for/after the length cookie that precedes the expression we write to
@@ -111,8 +158,9 @@ install_sig_handler (void)
 #define COOKIE_PRE  '\376'
 #define COOKIE_POST '\377'
 
-static void G_GNUC_PRINTF(1, 2)
-print_expr (const char* frm, ...)
+
+void
+Context::print_expr (const char* frm, ...)
 {
         char *expr, *expr_orig;
         va_list ap;
@@ -172,9 +220,19 @@ print_expr (const char* frm, ...)
         }
 }
 
+void
+Context::print_expr_oob (const char* frm, ...)
+{
+        /*
+         * STDOUT does not distinguish between replies to requests and
+         * out-of-band messages.  Reuse 'print_expr'.
+         */
+        va_list ap;
+        print_expr(frm, ap);
+}
 
-G_GNUC_PRINTF(2,3) static MuError
-print_error (MuError errcode, const char* frm, ...)
+MuError
+Context::print_error (MuError errcode, const char* frm, ...)
 {
         char    *msg;
         va_list  ap;
@@ -189,8 +247,8 @@ print_error (MuError errcode, const char* frm, ...)
         return errcode;
 }
 
-static unsigned
-print_sexps (MuMsgIter *iter, unsigned maxnum)
+unsigned
+Context::print_sexps (MuMsgIter *iter, unsigned maxnum)
 {
         unsigned u;
         u = 0;
@@ -215,62 +273,6 @@ print_sexps (MuMsgIter *iter, unsigned maxnum)
         }
         return u;
 }
-
-
-struct Context {
-        Context(){}
-        Context (MuConfig *opts) {
-                const auto dbpath{mu_runtime_path(MU_RUNTIME_PATH_XAPIANDB)};
-                GError *gerr{};
-                store = mu_store_new_writable (dbpath, NULL);
-                if (!store) {
-                        const auto mu_init = format("mu init %s%s",
-                                                    opts->muhome ? "--muhome=" : "",
-                                                    opts->muhome ? opts->muhome : "");
-
-                        if (gerr) {
-                                if ((MuError)gerr->code == MU_ERROR_XAPIAN_CANNOT_GET_WRITELOCK)
-                                        print_error(MU_ERROR_XAPIAN_CANNOT_GET_WRITELOCK,
-                                                    "mu database already locked; "
-                                                    "some other mu running?");
-                                else
-                                        print_error((MuError)gerr->code,
-                                                    "cannot open database @ %s:%s; already running? "
-                                                    "if not, please try '%s", dbpath,
-                                                    gerr->message ? gerr->message : "something went wrong",
-                                                    mu_init.c_str());
-                        } else
-                                print_error(MU_ERROR,
-                                            "cannot open database @ %s; already running? if not, please try '%s'",
-                                            dbpath, mu_init.c_str());
-
-                        throw Mu::Error (Error::Code::Store, &gerr/*consumed*/,
-                                         "failed to open database @ %s; already running? if not, please try '%s'",
-                                         dbpath, mu_init.c_str());
-                }
-
-                query = mu_query_new (store, &gerr);
-                if (!query)
-                        throw Error(Error::Code::Store, &gerr, "failed to create query");
-        }
-
-        ~Context() {
-                if (query)
-                        mu_query_destroy(query);
-                if (store) {
-                        mu_store_flush(store);
-                        mu_store_unref(store);
-                }
-        }
-
-        Context(const Context&) = delete;
-
-        MuStore *store{};
-        MuQuery *query{};
-        bool do_quit{};
-
-        CommandMap command_map;
-};
 
 
 static MuMsgOptions
@@ -307,7 +309,7 @@ add_handler (Context& context, const Parameters& params)
                 throw Error(Error::Code::Store, &gerr, "failed to add message at %s",
                             path.c_str());
 
-        print_expr ("(:info add :path %s :docid %u)", quote(path).c_str(), docid);
+        context.print_expr ("(:info add :path %s :docid %u)", quote(path).c_str(), docid);
 
         auto msg{mu_store_get_msg(context.store, docid, &gerr)};
         if (!msg)
@@ -315,7 +317,7 @@ add_handler (Context& context, const Parameters& params)
                             path.c_str());
 
         auto sexp{mu_msg_to_sexp (msg, docid, NULL, MU_MSG_OPTION_VERIFY)};
-        print_expr ("(:update %s :move nil)", sexp);
+        context.print_expr ("(:update %s :move nil)", sexp);
         mu_msg_unref(msg);
         g_free (sexp);
 }
@@ -437,7 +439,7 @@ compose_handler (Context& context, const Parameters& params)
                 atts = (ctype == FORWARD) ? include_attachments (msg, opts) : NULL;
                 mu_msg_unref (msg);
         }
-        print_expr ("(:compose %s :original %s :include %s)",
+        context.print_expr ("(:compose %s :original %s :include %s)",
                     typestr.c_str(), sexp ? sexp : "nil", atts ? atts : "nil");
 
         g_free (sexp);
@@ -536,12 +538,12 @@ contacts_handler (Context& context, const Parameters& params)
 
         /* dump the contacts cache as a giant sexp */
         auto sexp = contacts_to_sexp (contacts, personal, after, tstamp);
-        print_expr ("%s\n", sexp);
+        context.print_expr ("%s\n", sexp);
         g_free (sexp);
 }
 
 static void
-save_part (MuMsg *msg, unsigned docid, unsigned index,
+save_part (Context& context, MuMsg *msg, unsigned docid, unsigned index,
            MuMsgOptions opts, const Parameters& params)
 {
         const auto path{get_string_or(params, "path")};
@@ -553,12 +555,12 @@ save_part (MuMsg *msg, unsigned docid, unsigned index,
                                path.c_str(), index, &gerr))
                 throw Error{Error::Code::File, &gerr, "failed to save part"};
 
-        print_expr ("(:info save :message %s)", quote(path + " has been saved").c_str());
+        context.print_expr ("(:info save :message %s)", quote(path + " has been saved").c_str());
 }
 
 
 static void
-open_part (MuMsg *msg, unsigned docid, unsigned index, MuMsgOptions opts)
+open_part (Context& context, MuMsg *msg, unsigned docid, unsigned index, MuMsgOptions opts)
 {
         GError *gerr{};
         char *targetpath{mu_msg_part_get_cache_path (msg, opts, index, &gerr)};
@@ -577,13 +579,13 @@ open_part (MuMsg *msg, unsigned docid, unsigned index, MuMsgOptions opts)
                 throw Error{Error::Code::File, &gerr, "failed to play"};
         }
 
-        print_expr ("(:info open :message %s)",
+        context.print_expr ("(:info open :message %s)",
                     quote(std::string{targetpath} + " has been opened").c_str());
         g_free (targetpath);
 }
 
 static void
-temp_part (MuMsg *msg, unsigned docid, unsigned index,
+temp_part (Context& context, MuMsg *msg, unsigned docid, unsigned index,
            MuMsgOptions opts, const Parameters& params)
 {
         const auto what{get_symbol_or(params, "what")};
@@ -607,14 +609,14 @@ temp_part (MuMsg *msg, unsigned docid, unsigned index,
         g_free(path);
 
         if (!param.empty())
-                print_expr ("(:temp %s"
+                context.print_expr ("(:temp %s"
                             " :what \"%s\""
                             " :docid %u"
                             " :param %s"
                             ")",
                             qpath.c_str(), what.c_str(), docid, quote(param).c_str());
         else
-                print_expr ("(:temp %s :what \"%s\" :docid %u)",
+                context.print_expr ("(:temp %s :what \"%s\" :docid %u)",
                             qpath.c_str(), what.c_str(), docid);
 }
 
@@ -636,11 +638,11 @@ extract_handler (Context& context, const Parameters& params)
         try {
                 const auto action{get_symbol_or(params, "action")};
                 if (action == "save")
-                        save_part (msg, docid, index, opts, params);
+                        save_part (context, msg, docid, index, opts, params);
                 else if (action == "open")
-                        open_part (msg, docid, index, opts);
+                        open_part (context, msg, docid, index, opts);
                 else if (action == "temp")
-                        temp_part (msg, docid, index, opts, params);
+                        temp_part (context, msg, docid, index, opts, params);
                 else {
                         throw Error{Error::Code::InvalidArgument,
                                         "unknown action '%s'", action.c_str()};
@@ -767,9 +769,9 @@ find_handler (Context& context, const Parameters& params)
         /* before sending new results, send an 'erase' message, so the frontend
          * knows it should erase the headers buffer. this will ensure that the
          * output of two finds will not be mixed. */
-        print_expr ("(:erase t)");
-        const auto foundnum{print_sexps (miter, maxnum)};
-        print_expr ("(:found %u)", foundnum);
+        context.print_expr ("(:erase t)");
+        const auto foundnum{context.print_sexps (miter, maxnum)};
+        context.print_expr ("(:found %u)", foundnum);
         mu_msg_iter_destroy (miter);
 }
 
@@ -826,10 +828,12 @@ index_msg_cb (MuIndexStats *stats, void *user_data)
         if (MuTerminate)
                 return MU_STOP;
 
+        Context *context_ptr = reinterpret_cast<Context *>(user_data);
+
         if (stats->_processed % 1000)
                 return MU_OK;
 
-        print_expr ("(:info index :status running "
+        context_ptr->print_expr_oob ("(:info index :status running "
                     ":processed %u :updated %u)",
                     stats->_processed, stats->_updated);
 
@@ -838,12 +842,12 @@ index_msg_cb (MuIndexStats *stats, void *user_data)
 
 
 static MuError
-index_and_maybe_cleanup (MuIndex *index, bool cleanup, bool lazy_check)
+index_and_maybe_cleanup (Context& context, MuIndex *index, bool cleanup, bool lazy_check)
 {
         MuIndexStats stats{}, stats2{};
         mu_index_stats_clear (&stats);
         auto rv = mu_index_run (index, FALSE, lazy_check, &stats,
-                                index_msg_cb, NULL, NULL);
+                                index_msg_cb, NULL, &context);
         if (rv != MU_OK && rv != MU_STOP)
                 throw Error{Error::Code::Store, "indexing failed"};
 
@@ -855,7 +859,7 @@ index_and_maybe_cleanup (MuIndex *index, bool cleanup, bool lazy_check)
                         throw Error{Error::Code::Store, &gerr, "cleanup failed"};
         }
 
-        print_expr ("(:info index :status complete "
+        context.print_expr ("(:info index :status complete "
                     ":processed %u :updated %u :cleaned-up %u)",
                     stats._processed, stats._updated, stats2._cleaned_up);
 
@@ -874,7 +878,7 @@ index_handler (Context& context, const Parameters& params)
                 throw Error(Error::Code::Index, &gerr, "failed to create index object");
 
         try {
-                index_and_maybe_cleanup (index, cleanup, lazy_check);
+                index_and_maybe_cleanup (context, index, cleanup, lazy_check);
         } catch (...) {
                 mu_index_destroy(index);
                 throw;
@@ -892,7 +896,7 @@ mkdir_handler (Context& context, const Parameters& params)
         if (!mu_maildir_mkdir(path.c_str(), 0755, FALSE, &gerr))
                 throw Error{Error::Code::File, &gerr, "failed to create maildir"};
 
-        print_expr ("(:info mkdir :message \"%s has been created\")", path.c_str());
+        context.print_expr ("(:info mkdir :message \"%s has been created\")", path.c_str());
 }
 
 
@@ -914,7 +918,7 @@ get_flags (const std::string& path, const std::string& flagstr)
 }
 
 static void
-do_move (MuStore *store, DocId docid, MuMsg *msg, const std::string& maildirarg,
+do_move (Context& context, MuStore *store, DocId docid, MuMsg *msg, const std::string& maildirarg,
          MuFlags flags, bool new_name, bool no_view)
 {
         bool different_mdir{};
@@ -938,14 +942,14 @@ do_move (MuStore *store, DocId docid, MuMsg *msg, const std::string& maildirarg,
         char *sexp = mu_msg_to_sexp (msg, docid, NULL, MU_MSG_OPTION_VERIFY);
         /* note, the :move t thing is a hint to the frontend that it
          * could remove the particular header */
-        print_expr ("(:update %s :move %s :maybe-view %s)", sexp,
+        context.print_expr ("(:update %s :move %s :maybe-view %s)", sexp,
                     different_mdir ? "t" : "nil",
                     no_view ? "nil" : "t");
         g_free (sexp);
 }
 
 static void
-move_docid (MuStore *store, DocId docid, const std::string& flagstr,
+move_docid (Context& context, MuStore *store, DocId docid, const std::string& flagstr,
             bool new_name, bool no_view)
 {
         if (docid == MU_STORE_INVALID_DOCID)
@@ -963,7 +967,7 @@ move_docid (MuStore *store, DocId docid, const std::string& flagstr,
                 if (flags == MU_FLAG_INVALID)
                         throw Error{Error::Code::InvalidArgument, "invalid flags '%s'", flagstr.c_str()};
 
-                do_move (store, docid, msg, "", flags, new_name, no_view);
+                do_move (context, store, docid, msg, "", flags, new_name, no_view);
 
         } catch (...) {
                 if (msg)
@@ -998,7 +1002,7 @@ move_handler (Context& context, const Parameters& params)
                                         "can't move multiple messages at the same time"};
                 // multi.
                 for (auto&& docid: docids)
-                        move_docid(context.store, docid, flagstr, rename, no_view);
+                        move_docid(context, context.store, docid, flagstr, rename, no_view);
                 return;
         }
         auto docid{docids.at(0)};
@@ -1027,7 +1031,7 @@ move_handler (Context& context, const Parameters& params)
         }
 
         try {
-                do_move (context.store, docid, msg, maildir, flags, rename, no_view);
+                do_move (context, context.store, docid, msg, maildir, flags, rename, no_view);
         } catch (...) {
                 mu_msg_unref(msg);
                 throw;
@@ -1073,7 +1077,7 @@ ping_handler (Context& context, const Parameters& params)
                 return res;
         }();
 
-        print_expr ("(:pong \"mu\" :props ("
+        context.print_expr ("(:pong \"mu\" :props ("
                     ":version \"" VERSION "\" "
                     "%s "
                     ":database-path %s "
@@ -1109,7 +1113,7 @@ remove_handler (Context& context, const Parameters& params)
                             "failed to remove message @ %s (%d) from store",
                             path.c_str(), docid);
 
-        print_expr ("(:remove %u)", docid);
+        context.print_expr ("(:remove %u)", docid);
 }
 
 
@@ -1122,7 +1126,7 @@ sent_handler (Context& context, const Parameters& params)
         if (docid == MU_STORE_INVALID_DOCID)
                 throw Error{Error::Code::Store, &gerr, "failed to add path"};
 
-        print_expr ("(:sent t :path %s :docid %u)", quote(path).c_str(), docid);
+        context.print_expr ("(:sent t :path %s :docid %u)", quote(path).c_str(), docid);
 }
 
 
@@ -1148,12 +1152,12 @@ view_handler (Context& context, const Parameters& params)
         auto sexp{mu_msg_to_sexp(msg, docid, {}, message_options(params))};
         mu_msg_unref(msg);
 
-        print_expr ("(:view %s)\n", sexp);
+        context.print_expr ("(:view %s)\n", sexp);
         g_free (sexp);
 }
 
 
-static CommandMap
+CommandMap
 make_command_map (Context& context)
 {
       CommandMap cmap;
@@ -1403,7 +1407,7 @@ mu_cmd_server (MuConfig *opts, GError **err) try
 
                 } catch (const Error& er) {
                         std::cerr << ";; error: " << er.what() << "\n";
-                        print_error ((MuError)er.code(), "%s (line was:'%s')",
+                        context.print_error ((MuError)er.code(), "%s (line was:'%s')",
                                      er.what(), line.c_str());
                 }
         }

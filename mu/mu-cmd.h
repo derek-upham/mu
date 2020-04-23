@@ -106,6 +106,15 @@ MuError mu_cmd_index (MuStore *store, MuConfig *opt, GError **err);
  */
 MuError mu_cmd_server (MuConfig *opts, GError **err);
 
+/**
+ * execute the dbus command
+ * @param opts configuration options
+ * @param err receives error information, or NULL
+ *
+ * @return MU_OK (0) if the command succeeds, some error code otherwise
+ */
+MuError mu_cmd_dbus (MuConfig *opts, GError **err);
+
 G_END_DECLS
 
 #endif /*__MU_CMD_H__*/

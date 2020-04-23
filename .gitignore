@@ -1,6 +1,7 @@
 www/mu
 mug
 /mu/mu
+/mu/mu-cmd-dbus-generated*
 /mu/mu-help-strings.h
 mug2
 .desktop
@@ -121,3 +122,7 @@ perf.data.old
 mu-*-coverage
 mu*tar.xz
 compile_commands.json
+xua/
+/mu/mu-server-dbus-glue.c
+/mu/mu-server-dbus-glue.h
+/mu/mu-server-dbus.xml.h

@@ -19,7 +19,9 @@ include $(top_srcdir)/gtest.mk
 AM_CPPFLAGS=							\
 	-I${top_srcdir}/lib					\
 	$(GLIB_CFLAGS)						\
-	$(CODE_COVERAGE_CFLAGS)
+	$(CODE_COVERAGE_CFLAGS)					\
+	$(GIO_CFLAGS)						\
+	$(GIO_UNIX_CFLAGS)
 
 # don't use -Werror, as it might break on other compilers
 # use -Wno-unused-parameters, because some callbacks may not
@@ -40,6 +42,17 @@ AM_CXXFLAGS=							\
 AM_LDFLAGS=							\
 	$(ASAN_LDFLAGS)
 
+if BUILD_DBUS
+dbus_sources=mu-cmd-dbus.cc
+dbus_built_sources=						\
+	mu-server-dbus-glue.c					\
+	mu-server-dbus-glue.h					\
+	mu-server-dbus.xml.h
+else
+dbus_built_sources=
+dbus_sources=
+endif
+
 bin_PROGRAMS=							\
 	mu
 
@@ -56,10 +69,26 @@ mu_SOURCES=							\
 	mu-cmd-server.cc					\
 	mu-cmd-script.c						\
 	mu-cmd.c						\
-	mu-cmd.h
+	mu-cmd.h						\
+	mu-cmd-server.h						\
+	$(dbus_sources)						\
+	$(BUILT_SOURCES)
 
 BUILT_SOURCES=							\
-	mu-help-strings.h
+	mu-help-strings.h					\
+	$(dbus_built_sources)
+
+mu-cmd-dbus.cc: $(dbus_built_sources)
+
+mu-server-dbus-glue.c: mu-server-dbus-glue.h
+mu-server-dbus-glue.h: mu-server-dbus.xml
+	$(AM_V_GEN) ${GDBUS_CODEGEN} --generate-c-code          \
+        ${builddir}/mu-server-dbus-glue --c-namespace=Mu	\
+         --interface-prefix=nl.djcbsoftware.Mu			\
+	 --c-generate-object-manager				\
+         ${srcdir}/mu-server-dbus.xml
+mu-server-dbus.xml.h: mu-server-dbus.xml
+	$(AM_V_GEN) ${AWK} '{gsub(/"/,"\\\"",$$0); print "\"" $$0 "\"";}' < $< > $@
 
 mu-help-strings.h: mu-help-strings.txt mu-help-strings.awk
 	 $(AM_V_GEN) $(AWK) -f ${top_srcdir}/mu/mu-help-strings.awk < $< > $@
@@ -69,11 +98,14 @@ mu_LDADD=							\
 	${top_builddir}/lib/utils/libmu-utils.la		\
 	$(GLIB_LIBS)						\
 	$(READLINE_LIBS)					\
-	$(CODE_COVERAGE_LIBS)
+	$(CODE_COVERAGE_LIBS)					\
+	$(GIO_LIBS)						\
+	$(GIO_UNIX_LIBS)
 
 EXTRA_DIST=							\
 	mu-help-strings.awk					\
-	mu-help-strings.txt
+	mu-help-strings.txt					\
+	mu-server-dbus.xml
 
 noinst_PROGRAMS= $(TEST_PROGS)
 
