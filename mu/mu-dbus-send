@@ -6,7 +6,7 @@ set -u
 # Name for the program, without the directory, to display in error messages
 progname="$(basename "$0")"
 
-print_reply=no
+print_reply=true
 reply_timeout=1000                           # milliseconds
 
 service_name=nl.djcbsoftware.Mu.Maildir
