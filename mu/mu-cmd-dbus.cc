@@ -189,11 +189,11 @@ on_maildirmanager_execute (MuServer			*md_mgr,
 	try {
 		const std::string line = std::string (payload);
 		invoke (dbus_context.command_map, Sexp::parse(line));
-		dbus_context.send_response();
 	}
 	catch (const Error& er) {
 		dbus_context.print_error ((MuError) er.code(), "%s", er.what());
 	}
+	dbus_context.send_response();
 
 	if (dbus_context.do_quit) {
 		g_main_loop_quit (dbus_loop);
