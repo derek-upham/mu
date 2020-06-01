@@ -54,7 +54,7 @@ error() {
 # Because we want to examine the exit status of 'getopt', we are
 # limited to storing the result of the command substiution.  The 'eval
 # set --' call has to come afterwards.
-TEMP=$(getopt -n "$progname" -o '' --long print-reply,reply-timeout: -- "$@")
+TEMP=$(getopt -n "$progname" -o '' --long help,print-reply,reply-timeout: -- "$@")
 
 if test $? != 0; then
     usage
@@ -79,12 +79,18 @@ while true ; do
             reply_timeout="$1"
             shift 1
             ;;
+        --help)
+            usage
+            exit 0
+            ;;
         --)
             shift 1
-            break ;;
+            break
+            ;;
         *)
             echo "$progname: invalid argument $1" 1>&2
-            exit 1 ;;
+            exit 1
+            ;;
     esac
 done
 
