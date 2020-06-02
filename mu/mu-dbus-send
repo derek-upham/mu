@@ -7,7 +7,7 @@ set -u
 progname="$(basename "$0")"
 
 print_reply=true
-reply_timeout=1000                           # milliseconds
+reply_timeout=60000                          # milliseconds
 
 service_name=nl.djcbsoftware.Mu.Maildir
 object='/mu/cache'
@@ -20,7 +20,7 @@ usage: $progname [--[no-]print-reply] [--reply-timeout=MSECS] SEXP"
 
 Send SEXP to the running MU server listening to the session D-Bus.
 
-By default, the client wait 1000 ms for a reply from the server.  Use
+By default, the client wait 60 seconds for a reply from the server.  Use
 --reply-timeout to specify a different timeout, or --no-print-reply to
 not wait for a timeout at all.
 
@@ -29,10 +29,10 @@ This script requires the "dbus-send" command line utility.
 Example:
 
 # Trigger a reindex and cleanup
-% mu-dbus-send --reply-timeout=60000 "(index :cleanup true)"
+% mu-dbus-send "(index :cleanup true)"
 
 # Shut down the server
-% mu-dbus-send '(quit)'
+% mu-dbus-send --reply-timeout=5000 '(quit)'
 
 EOF
 }
